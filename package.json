@@ -5,7 +5,8 @@
   "main": "index.js",
   "scripts": {
     "start": "tsx src/server.ts",
-    "test": "playwright test"
+    "test": "playwright test",
+    "test:payments": "playwright test --config=playwright.config.ts payments"
   },
   "keywords": [],
   "type": "commonjs",
