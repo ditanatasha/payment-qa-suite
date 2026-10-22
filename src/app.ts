@@ -26,7 +26,7 @@ app.get("/health", (_req, res) => {
   res.json({ ok: true });
 });
 
-app.post("/payments", (req, res) => {
+app.post("/payments", async (req, res) => {
   const key = req.header("Idempotency-Key");
   const { amount, currency, card } = req.body ?? {};
 
@@ -64,6 +64,10 @@ app.post("/payments", (req, res) => {
   if (status === "SUCCEEDED") {
     db.prepare("INSERT INTO ledger (payment_id, type, amount) VALUES (?, ?, ?)")
       .run(id, "CHARGE", amount);
+  }
+
+  if (req.header("x-simulate") === "timeout") {
+    await new Promise((resolve) => setTimeout(resolve, 3000));
   }
 
   const payment = db.prepare("SELECT * FROM payments WHERE id = ?").get(id);
