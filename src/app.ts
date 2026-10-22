@@ -9,7 +9,8 @@ db.exec(`
     idempotency_key TEXT UNIQUE NOT NULL,
     amount INTEGER NOT NULL,
     currency TEXT NOT NULL,
-    status TEXT NOT NULL
+    status TEXT NOT NULL,
+    refunded_amount INTEGER NOT NULL DEFAULT 0
   );
   CREATE TABLE ledger (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -85,4 +86,38 @@ app.get("/payments/:id/ledger", (req, res) => {
     .prepare("SELECT type, amount FROM ledger WHERE payment_id = ?")
     .all(req.params.id);
   res.json(rows);
+});
+
+app.post("/payments/:id/refunds", (req, res) => {
+  const payment = db
+    .prepare("SELECT * FROM payments WHERE id = ?")
+    .get(req.params.id) as any;
+
+  if (!payment) {
+    return res.status(404).json({ error: "NOT_FOUND" });
+  }
+  if (payment.status === "DECLINED") {
+    return res.status(409).json({ error: "PAYMENT_NOT_REFUNDABLE" });
+  }
+
+  // No amount given = refund whatever is left
+  const amount = req.body?.amount ?? payment.amount - payment.refunded_amount;
+
+  if (!Number.isInteger(amount) || amount <= 0) {
+    return res.status(400).json({ error: "INVALID_AMOUNT" });
+  }
+  if (payment.refunded_amount + amount > payment.amount) {
+    return res.status(422).json({ error: "REFUND_EXCEEDS_PAYMENT" });
+  }
+
+  const totalRefunded = payment.refunded_amount + amount;
+  const status = totalRefunded === payment.amount ? "REFUNDED" : "PARTIALLY_REFUNDED";
+
+  db.prepare("UPDATE payments SET refunded_amount = ?, status = ? WHERE id = ?")
+    .run(totalRefunded, status, payment.id);
+  db.prepare("INSERT INTO ledger (payment_id, type, amount) VALUES (?, ?, ?)")
+    .run(payment.id, "REFUND", amount);
+
+  const updated = db.prepare("SELECT * FROM payments WHERE id = ?").get(payment.id);
+  res.json(updated);
 });
