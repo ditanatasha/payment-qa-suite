@@ -3,22 +3,28 @@ import Database from "better-sqlite3";
 import { randomUUID } from "crypto";
 
 const db = new Database(":memory:");
-db.exec(`
-  CREATE TABLE payments (
-    id TEXT PRIMARY KEY,
-    idempotency_key TEXT UNIQUE NOT NULL,
-    amount INTEGER NOT NULL,
-    currency TEXT NOT NULL,
-    status TEXT NOT NULL,
-    refunded_amount INTEGER NOT NULL DEFAULT 0
-  );
-  CREATE TABLE ledger (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    payment_id TEXT NOT NULL,
-    type TEXT NOT NULL,
-    amount INTEGER NOT NULL
-  );
-`);
+
+const createTables = () => {
+  db.exec(`
+    DROP TABLE IF EXISTS payments;
+    DROP TABLE IF EXISTS ledger;
+    CREATE TABLE payments (
+      id TEXT PRIMARY KEY,
+      idempotency_key TEXT UNIQUE NOT NULL,
+      amount INTEGER NOT NULL,
+      currency TEXT NOT NULL,
+      status TEXT NOT NULL,
+      refunded_amount INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE TABLE ledger (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      payment_id TEXT NOT NULL,
+      type TEXT NOT NULL,
+      amount INTEGER NOT NULL
+    );
+  `);
+};
+createTables();
 
 export const app = express();
 app.use(express.json());
@@ -120,4 +126,38 @@ app.post("/payments/:id/refunds", (req, res) => {
 
   const updated = db.prepare("SELECT * FROM payments WHERE id = ?").get(payment.id);
   res.json(updated);
+});
+
+// TEST-ONLY: wipe the database
+app.post("/admin/reset", (_req, res) => {
+  createTables();
+  res.json({ ok: true });
+});
+
+// TEST-ONLY: simulate a bug by deleting a payment's ledger rows
+app.delete("/admin/ledger/:paymentId", (req, res) => {
+  db.prepare("DELETE FROM ledger WHERE payment_id = ?").run(req.params.paymentId);
+  res.json({ ok: true });
+});
+
+// Reconciliation: compare payments vs ledger
+app.get("/admin/reconciliation", (_req, res) => {
+  const mismatches = db
+    .prepare(
+      `SELECT
+         p.id,
+         p.status,
+         p.amount,
+         p.refunded_amount,
+         COALESCE(SUM(CASE WHEN l.type = 'CHARGE' THEN l.amount END), 0) AS charged,
+         COALESCE(SUM(CASE WHEN l.type = 'REFUND' THEN l.amount END), 0) AS refunded
+       FROM payments p
+       LEFT JOIN ledger l ON l.payment_id = p.id
+       GROUP BY p.id
+       HAVING (p.status != 'DECLINED' AND charged != p.amount)
+           OR (p.status = 'DECLINED' AND charged != 0)
+           OR refunded != p.refunded_amount`
+    )
+    .all();
+  res.json({ mismatches });
 });
