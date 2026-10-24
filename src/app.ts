@@ -52,13 +52,13 @@ app.post("/payments", async (req, res) => {
     .prepare("SELECT * FROM payments WHERE idempotency_key = ?")
     .get(key) as any;
 
-  if (existing) {
+  /*if (existing) {
     if (existing.amount !== amount || existing.currency !== currency) {
       return res.status(422).json({ error: "IDEMPOTENCY_KEY_REUSED" });
     }
     res.set("Idempotent-Replayed", "true");
     return res.status(200).json(existing);
-  }
+  }*/
 
   // New key: create the payment
   const status = card === "4000000000000002" ? "DECLINED" : "SUCCEEDED";
